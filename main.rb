@@ -1,3 +1,4 @@
+# coding: utf-8
 class InvalidTokenError < StandardError
 end
 class NullToken
@@ -64,18 +65,36 @@ class TextScanner < SimpleScanner
   end
 end
 
-def ary_split(ary, v)
-  new_ary = []
-  cur_ary = []
-  ary.each do |x|
-    if x != v
-      cur_ary.push(x)
-    else
-      new_ary.push(cur_ary)
-      cur_ary = []
-    end
+class HTree
+  attr_accessor :node, :children, :contents, :last_htree, :parent
+  def initialize(node:)
+    @node = node
+    @children = []
+    @contents = []
+    @last_htree = self
   end
-  new_ary
+  def append(tree)
+    unless tree.node.type.match(/^H[1-5]$/)
+      @last_htree.contents.push(tree.node)
+      return
+    end
+    if @last_htree != self && @last_htree.node.type[1].to_i < tree.node.type[1].to_i
+      @last_htree.append(tree)
+      tree.parent = tree
+    elsif @parent && @parent.node.type[1].to_i > tree.node.type[1].to_i
+      @parent.append(tree)
+    else
+      @children.push(tree)
+    end
+    @last_htree = tree
+  end
+  def to_s(tab=0)
+    fst_value = ""
+    fst_value = @contents[1].value if @contents.size > 0
+    puts "#{'#'*tab}#{@node.type} #{fst_value}"
+    @contents[2..-1].each{|x| puts "#{'-'*tab}=>#{x.value}"} if @contents.size > 0
+    @children.each{|x| x.to_s(tab+1)} if @children.size > 0
+  end
 end
 
 class Tokenizer
@@ -84,8 +103,13 @@ class Tokenizer
     TextScanner
   ].freeze
 
-  def tokenize_htree(tk_ary, h=Token.new(type: 'H1', value: '#'))
-    ary_split(tk_ary, )
+  def tokenize_htree(plain_markdown)
+    tk_ary = tokenize(plain_markdown)
+    top_tree = HTree.new(node: Token.new(type: 'H0', value: ''))
+    tk_ary.each do |x|
+      top_tree.append(HTree.new(node: x))
+    end
+    top_tree
   end
 
   def tokenize(plain_markdown)
@@ -140,8 +164,8 @@ class Tokenizer
   end
 end
 
-Dir.glob('/home/wasu/nippo/*.md')[2..3].each do |fp|
+ARGV[1..-1].each do |fp|
   p fp
-  tk = Tokenizer.new.tokenize(File.read(fp))
+  tk = Tokenizer.new.tokenize_htree(File.read(fp))
   puts tk
 end
