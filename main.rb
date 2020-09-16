@@ -66,33 +66,66 @@ class TextScanner < SimpleScanner
 end
 
 class HTree
-  attr_accessor :node, :children, :contents, :last_htree, :parent
-  def initialize(node:)
+  attr_accessor :node, :children, :contents, :parent
+  def initialize(node, last_htree)
     @node = node
     @children = []
     @contents = []
-    @last_htree = self
   end
-  def append(tree)
+  def recur_get
+    all_contents = @contents[2..-1].map(&:value).join('')
+    recur_children_contents = ""
+    unless @children.size.zero?
+      recur_children_contents = @children.map{|x| x.recur_get}.join('')
+    end
+    return <<"EOS"
+#{@node.value} #{@contents[1].value}
+
+#{all_contents}
+
+#{recur_children_contents}
+EOS
+  end
+  def get(cmds)
+    return "" if cmds.size.zero?
+    if @node.value == cmds.first[:value] &&
+       (cmds.first[:ptn] == ".*" ||
+        (!@contents.size.zero? && @contents[1].value.match(cmds.first[:ptn])))
+      if cmds.size == 1
+        return recur_get
+      else
+        return @children.map{|x| x.get(cmds[1..-1])}.join('')
+      end
+    else
+      return ""
+    end
+  end
+  def append(tree, is_last_append=true)
     unless tree.node.type.match(/^H[1-5]$/)
-      @last_htree.contents.push(tree.node)
+      @contents.push(tree.node)
       return
     end
-    if @last_htree != self && @last_htree.node.type[1].to_i < tree.node.type[1].to_i
-      @last_htree.append(tree)
-      tree.parent = tree
-    elsif @parent && @parent.node.type[1].to_i > tree.node.type[1].to_i
-      @parent.append(tree)
+
+    if @node.type[1].to_i < tree.node.type[1].to_i
+      tree.parent = self
+      @children.push(tree)
+    elsif @node.type[1].to_i >= tree.node.type[1].to_i
+      if @parent
+        @parent.append(tree, is_last_append)
+      else
+        tree.parent = self
+        @children.push(tree)
+      end
     else
+      tree.parent = self
       @children.push(tree)
     end
-    @last_htree = tree
   end
   def to_s(tab=0)
     fst_value = ""
-    fst_value = @contents[1].value if @contents.size > 0
-    puts "#{'#'*tab}#{@node.type} #{fst_value}"
-    @contents[2..-1].each{|x| puts "#{'-'*tab}=>#{x.value}"} if @contents.size > 0
+    fst_value = @contents[1].value if @contents.size > 0 && !@contents[1].nil?
+    puts "#{'='*tab}#{@node.type} #{fst_value}"
+    @contents[2..-1].each{|x| puts "#{'-'*tab}=>#{x.value}"} if @contents.size >= 2
     @children.each{|x| x.to_s(tab+1)} if @children.size > 0
   end
 end
@@ -105,9 +138,12 @@ class Tokenizer
 
   def tokenize_htree(plain_markdown)
     tk_ary = tokenize(plain_markdown)
-    top_tree = HTree.new(node: Token.new(type: 'H0', value: ''))
+    top_tree = HTree.new(Token.new(type: 'H0', value: ''), nil)
+    before_ht = top_tree
     tk_ary.each do |x|
-      top_tree.append(HTree.new(node: x))
+      ht = HTree.new(x, before_ht)
+      before_ht.append(ht)
+      before_ht = ht if ht.node.type[0] == 'H'
     end
     top_tree
   end
@@ -119,7 +155,7 @@ class Tokenizer
     base_cmd_cnt = 0
     new_ary = []
     while cnt < tk_ary.size
-      if (cnt <= 0 || tk_ary[cnt-1].type == 'NEWLINE') && tk_ary[cnt].type == 'H1'
+      if (cnt <= 0 || tk_ary[cnt-1].type == 'NEWLINE') && tk_ary[cnt].type[0] == 'H'
         base_cmd = tk_ary[cnt]
         base_cmd_cnt += 1
       elsif base_cmd && base_cmd.type == tk_ary[cnt].type
@@ -164,8 +200,26 @@ class Tokenizer
   end
 end
 
-ARGV[1..-1].each do |fp|
-  p fp
-  tk = Tokenizer.new.tokenize_htree(File.read(fp))
-  puts tk
-end
+htrees = ARGV.map{|fp| Tokenizer.new.tokenize_htree(File.read(fp))}
+
+cmds = [
+  {value: "", ptn: ".*"},
+  {value: "#", ptn: ".*"},
+  {value: "##", ptn: ".*"},
+  {value: "###", ptn: "からはじめよ"},
+  {value: "####", ptn: ".*"},
+]
+
+sepa = "======================"
+title_sepa = "----------------------"
+puts htrees.map{|x| {title: (x.children[0] == nil ? "" : x.children[0].contents[1].value),
+                     contents: x.get(cmds)}}
+       .select{|x| !x[:contents].strip.size.zero?}
+       .map{|x| "#{sepa}\r\n#{title_sepa}\r\n#{x[:title]}\r\n#{title_sepa}\r\n#{x[:contents]}\r\n#{sepa}"}
+       .join('')
+
+# ARGV[0..0].each do |fp|
+#   p fp
+#   tk = Tokenizer.new.tokenize_htree(File.read(fp))
+#   puts tk
+# end
